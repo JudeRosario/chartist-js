@@ -61,7 +61,7 @@
     showArea: false,
     // The base for the area chart that will be used to close the area shape (is normally 0)
     areaBase: 0,
-    // Specify if the lines should be smoothed (Catmull-Rom-Splines will be used)
+    // Specify if the lines should be smoothed. This value can be true or false where true will result in smoothing using the default smoothing interpolation function Chartist.Interpolation.cardinal and false results in Chartist.Interpolation.none. You can also choose other smoothing / interpolation functions available in the Chartist.Interpolation module, or write your own interpolation function. Check the examples for a brief description.
     lineSmooth: true,
     // Overriding the natural low of the chart allows you to zoom in or limit the charts lowest displayed value
     low: undefined,
@@ -71,6 +71,8 @@
     chartPadding: 5,
     // When set to true, the last grid line on the x-axis is not drawn and the chart elements will expand to the full available width of the chart. For the last label to be drawn correctly you might need to add chart padding or offset the last label with a draw event handler.
     fullWidth: false,
+    // If true the whole data is reversed including labels, the series order as well as the whole series data arrays.
+    reverseData: false,
     // Override the class names that get used to generate the SVG structure of the chart
     classNames: {
       chart: 'ct-chart-line',
@@ -93,142 +95,192 @@
    */
   function createChart(options) {
     var seriesGroups = [],
-      bounds,
-      normalizedData = Chartist.normalizeDataArray(Chartist.getDataArray(this.data), this.data.labels.length);
+      normalizedData = Chartist.normalizeDataArray(Chartist.getDataArray(this.data, options.reverseData), this.data.labels.length);
 
     // Create new svg object
     this.svg = Chartist.createSvg(this.container, options.width, options.height, options.classNames.chart);
 
-    // initialize bounds
-    bounds = Chartist.getBounds(this.svg, Chartist.getHighLow(normalizedData), options);
-
     var chartRect = Chartist.createChartRect(this.svg, options);
-    // Start drawing
-    var labels = this.svg.elem('g').addClass(options.classNames.labelGroup),
-      grid = this.svg.elem('g').addClass(options.classNames.gridGroup);
 
-    Chartist.createXAxis(chartRect, this.data, grid, labels, options, this.eventEmitter, this.supportsForeignObject);
-    Chartist.createYAxis(chartRect, bounds, grid, labels, options, this.eventEmitter, this.supportsForeignObject);
+    var highLow = Chartist.getHighLow(normalizedData);
+    // Overrides of high / low from settings
+    highLow.high = +options.high || (options.high === 0 ? 0 : highLow.high);
+    highLow.low = +options.low || (options.low === 0 ? 0 : highLow.low);
+
+    var axisX = new Chartist.StepAxis(
+      Chartist.Axis.units.x,
+      chartRect,
+      function xAxisTransform(projectedValue) {
+        projectedValue.pos = chartRect.x1 + projectedValue.pos;
+        return projectedValue;
+      },
+      {
+        x: options.axisX.labelOffset.x,
+        y: chartRect.y1 + options.axisX.labelOffset.y + (this.supportsForeignObject ? 5 : 20)
+      },
+      {
+        stepCount: this.data.labels.length,
+        stretch: options.fullWidth
+      }
+    );
+
+    var axisY = new Chartist.LinearScaleAxis(
+      Chartist.Axis.units.y,
+      chartRect,
+      function yAxisTransform(projectedValue) {
+        projectedValue.pos = chartRect.y1 - projectedValue.pos;
+        return projectedValue;
+      },
+      {
+        x: options.chartPadding + options.axisY.labelOffset.x + (this.supportsForeignObject ? -10 : 0),
+        y: options.axisY.labelOffset.y + (this.supportsForeignObject ? -15 : 0)
+      },
+      {
+        highLow: highLow,
+        scaleMinSpace: options.axisY.scaleMinSpace
+      }
+    );
+
+    // Start drawing
+    var labelGroup = this.svg.elem('g').addClass(options.classNames.labelGroup),
+      gridGroup = this.svg.elem('g').addClass(options.classNames.gridGroup);
+
+    Chartist.createAxis(
+      axisX,
+      this.data.labels,
+      chartRect,
+      gridGroup,
+      labelGroup,
+      this.supportsForeignObject,
+      options,
+      this.eventEmitter
+    );
+
+    Chartist.createAxis(
+      axisY,
+      axisY.bounds.values,
+      chartRect,
+      gridGroup,
+      labelGroup,
+      this.supportsForeignObject,
+      options,
+      this.eventEmitter
+    );
 
     // Draw the series
-    // initialize series groups
-    for (var i = 0; i < this.data.series.length; i++) {
-      seriesGroups[i] = this.svg.elem('g');
+    this.data.series.forEach(function(series, seriesIndex) {
+      seriesGroups[seriesIndex] = this.svg.elem('g');
 
-      // If the series is an object and contains a name we add a custom attribute
-      if(this.data.series[i].name) {
-        seriesGroups[i].attr({
-          'series-name': this.data.series[i].name
-        }, Chartist.xmlNs.uri);
-      }
+      // Write attributes to series group element. If series name or meta is undefined the attributes will not be written
+      seriesGroups[seriesIndex].attr({
+        'series-name': series.name,
+        'meta': Chartist.serialize(series.meta)
+      }, Chartist.xmlNs.uri);
 
       // Use series class from series data or if not set generate one
-      seriesGroups[i].addClass([
+      seriesGroups[seriesIndex].addClass([
         options.classNames.series,
-        (this.data.series[i].className || options.classNames.series + '-' + Chartist.alphaNumerate(i))
+        (series.className || options.classNames.series + '-' + Chartist.alphaNumerate(seriesIndex))
       ].join(' '));
 
-      var p,
-        pathCoordinates = [],
-        point;
+      var pathCoordinates = [];
 
-      for (var j = 0; j < normalizedData[i].length; j++) {
-        p = Chartist.projectPoint(chartRect, bounds, normalizedData[i], j, options);
+      normalizedData[seriesIndex].forEach(function(value, valueIndex) {
+        var p = {
+          x: chartRect.x1 + axisX.projectValue(value, valueIndex,  normalizedData[seriesIndex]).pos,
+          y: chartRect.y1 - axisY.projectValue(value, valueIndex,  normalizedData[seriesIndex]).pos
+        };
         pathCoordinates.push(p.x, p.y);
 
         //If we should show points we need to create them now to avoid secondary loop
         // Small offset for Firefox to render squares correctly
         if (options.showPoint) {
-          point = seriesGroups[i].elem('line', {
+          var point = seriesGroups[seriesIndex].elem('line', {
             x1: p.x,
             y1: p.y,
             x2: p.x + 0.01,
             y2: p.y
           }, options.classNames.point).attr({
-            'value': normalizedData[i][j]
+            'value': value,
+            'meta': Chartist.getMetaData(series, valueIndex)
           }, Chartist.xmlNs.uri);
 
           this.eventEmitter.emit('draw', {
             type: 'point',
-            value: normalizedData[i][j],
-            index: j,
-            group: seriesGroups[i],
+            value: value,
+            index: valueIndex,
+            group: seriesGroups[seriesIndex],
             element: point,
             x: p.x,
             y: p.y
           });
         }
-      }
+      }.bind(this));
 
       // TODO: Nicer handling of conditions, maybe composition?
       if (options.showLine || options.showArea) {
-        // TODO: We should add a path API in the SVG library for easier path creation
-        var pathElements = ['M' + pathCoordinates[0] + ',' + pathCoordinates[1]];
+        var smoothing = typeof options.lineSmooth === 'function' ?
+          options.lineSmooth : (options.lineSmooth ? Chartist.Interpolation.cardinal() : Chartist.Interpolation.none()),
+          path = smoothing(pathCoordinates);
 
-        // If smoothed path and path has more than two points then use catmull rom to bezier algorithm
-        if (options.lineSmooth && pathCoordinates.length > 4) {
+        if(options.showLine) {
+          var line = seriesGroups[seriesIndex].elem('path', {
+            d: path.stringify()
+          }, options.classNames.line, true).attr({
+            'values': normalizedData[seriesIndex]
+          }, Chartist.xmlNs.uri);
 
-          var cr = Chartist.catmullRom2bezier(pathCoordinates);
-          for(var k = 0; k < cr.length; k++) {
-            pathElements.push('C' + cr[k].join());
-          }
-        } else {
-          for(var l = 3; l < pathCoordinates.length; l += 2) {
-            pathElements.push('L' + pathCoordinates[l - 1] + ',' + pathCoordinates[l]);
-          }
+          this.eventEmitter.emit('draw', {
+            type: 'line',
+            values: normalizedData[seriesIndex],
+            path: path.clone(),
+            chartRect: chartRect,
+            index: seriesIndex,
+            group: seriesGroups[seriesIndex],
+            element: line
+          });
         }
 
         if(options.showArea) {
           // If areaBase is outside the chart area (< low or > high) we need to set it respectively so that
           // the area is not drawn outside the chart area.
-          var areaBase = Math.max(Math.min(options.areaBase, bounds.max), bounds.min);
-
-          // If we need to draw area shapes we just make a copy of our pathElements SVG path array
-          var areaPathElements = pathElements.slice();
+          var areaBase = Math.max(Math.min(options.areaBase, axisY.bounds.max), axisY.bounds.min);
 
           // We project the areaBase value into screen coordinates
-          var areaBaseProjected = Chartist.projectPoint(chartRect, bounds, [areaBase], 0, options);
-          // And splice our new area path array to add the missing path elements to close the area shape
-          areaPathElements.splice(0, 0, 'M' + areaBaseProjected.x + ',' + areaBaseProjected.y);
-          areaPathElements[1] = 'L' + pathCoordinates[0] + ',' + pathCoordinates[1];
-          areaPathElements.push('L' + pathCoordinates[pathCoordinates.length - 2] + ',' + areaBaseProjected.y);
+          var areaBaseProjected = chartRect.y1 - axisY.projectValue(areaBase).pos;
+
+          // Clone original path and splice our new area path to add the missing path elements to close the area shape
+          var areaPath = path.clone();
+          // Modify line path and add missing elements for area
+          areaPath.position(0)
+            .remove(1)
+            .move(chartRect.x1, areaBaseProjected)
+            .line(pathCoordinates[0], pathCoordinates[1])
+            .position(areaPath.pathElements.length)
+            .line(pathCoordinates[pathCoordinates.length - 2], areaBaseProjected);
 
           // Create the new path for the area shape with the area class from the options
-          var area = seriesGroups[i].elem('path', {
-            d: areaPathElements.join('')
+          var area = seriesGroups[seriesIndex].elem('path', {
+            d: areaPath.stringify()
           }, options.classNames.area, true).attr({
-            'values': normalizedData[i]
+            'values': normalizedData[seriesIndex]
           }, Chartist.xmlNs.uri);
 
           this.eventEmitter.emit('draw', {
             type: 'area',
-            values: normalizedData[i],
-            index: i,
-            group: seriesGroups[i],
+            values: normalizedData[seriesIndex],
+            path: areaPath.clone(),
+            chartRect: chartRect,
+            index: seriesIndex,
+            group: seriesGroups[seriesIndex],
             element: area
           });
         }
-
-        if(options.showLine) {
-          var line = seriesGroups[i].elem('path', {
-            d: pathElements.join('')
-          }, options.classNames.line, true).attr({
-            'values': normalizedData[i]
-          }, Chartist.xmlNs.uri);
-
-          this.eventEmitter.emit('draw', {
-            type: 'line',
-            values: normalizedData[i],
-            index: i,
-            group: seriesGroups[i],
-            element: line
-          });
-        }
       }
-    }
+    }.bind(this));
 
     this.eventEmitter.emit('created', {
-      bounds: bounds,
+      bounds: axisY.bounds,
       chartRect: chartRect,
       svg: this.svg,
       options: options
@@ -264,6 +316,20 @@
    *
    * // In the global name space Chartist we call the Line function to initialize a line chart. As a first parameter we pass in a selector where we would like to get our chart created. Second parameter is the actual data object and as a third parameter we pass in our options
    * new Chartist.Line('.ct-chart', data, options);
+   *
+   * @example
+   * // Use specific interpolation function with configuration from the Chartist.Interpolation module
+   *
+   * var chart = new Chartist.Line('.ct-chart', {
+   *   labels: [1, 2, 3, 4, 5],
+   *   series: [
+   *     [1, 1, 8, 1, 7]
+   *   ]
+   * }, {
+   *   lineSmooth: Chartist.Interpolation.cardinal({
+   *     tension: 0.2
+   *   })
+   * });
    *
    * @example
    * // Create a line chart with responsive options

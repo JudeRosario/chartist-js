@@ -228,6 +228,9 @@ sections:
             -
               - '<a href="https://github.com/soderlind/tablepress_chartist" target="_blank">tablepress_chartist</a>'
               - Wordpress / Tablepress Extension
+            - 
+              - '<a href="https://github.com/tylergaw/ember-cli-chartist" target="_blank">ember-cli-chartist</a>'
+              - Ember Addon
   - title: Chart CSS animation example
     level: 3
     items:
@@ -257,7 +260,7 @@ sections:
         data:
           text: >
                   Almost limitless animation possibilities with the Chartist.Svg animation API. Checkout the
-                  <a href="getting-started.html#animations-using-chartistsvg">advanced getting stated guide about SVG
+                  <a href="getting-started.html#animations-using-chartistsvg">advanced getting started guide about SVG
                   animations</a> with SMIL.
 
   - title: Responsive charts configuration

@@ -17,11 +17,36 @@
    * Updates the chart which currently does a full reconstruction of the SVG DOM
    *
    * @param {Object} [data] Optional data you'd like to set for the chart before it will update. If not specified the update method will use the data that is already configured with the chart.
+   * @param {Object} [options] Optional options you'd like to add to the previous options for the chart before it will update. If not specified the update method will use the options that have been already configured with the chart.
+   * @param {Boolean} [extendObjects] If set to true, the passed options will be used to extend the options that have been configured already.
    * @memberof Chartist.Base
    */
-  function update(data) {
-    this.data = data || this.data;
-    this.createChart(this.optionsProvider.currentOptions);
+  function update(data, options, extendObjects) {
+    if(data) {
+      this.data = data;
+      // Event for data transformation that allows to manipulate the data before it gets rendered in the charts
+      this.eventEmitter.emit('data', {
+        type: 'update',
+        data: this.data
+      });
+    }
+
+    if(options) {
+      this.options = Chartist.extend({}, extendObjects ? this.options : {}, options);
+
+      // If chartist was not initialized yet, we just set the options and leave the rest to the initialization
+      if(!this.initializeTimeoutId) {
+        this.optionsProvider.removeMediaQueryListeners();
+        this.optionsProvider = Chartist.optionsProvider(this.options, this.responsiveOptions, this.eventEmitter);
+      }
+    }
+
+    // Only re-created the chart if it has been initialized yet
+    if(!this.initializeTimeoutId) {
+      this.createChart(this.optionsProvider.currentOptions);
+    }
+
+    // Return a reference to the chart object to chain up calls
     return this;
   }
 
@@ -67,6 +92,10 @@
     // Obtain current options based on matching media queries (if responsive options are given)
     // This will also register a listener that is re-creating the chart based on media changes
     this.optionsProvider = Chartist.optionsProvider(this.options, this.responsiveOptions, this.eventEmitter);
+    // Register options change listener that will trigger a chart update
+    this.eventEmitter.addEventHandler('optionsChanged', function() {
+      this.update();
+    }.bind(this));
 
     // Before the first chart creation we need to register us with all plugins that are configured
     // Initialize all relevant plugins with our chart object and the plugin options specified in the config
@@ -79,6 +108,12 @@
         }
       }.bind(this));
     }
+
+    // Event for data transformation that allows to manipulate the data before it gets rendered in the charts
+    this.eventEmitter.emit('data', {
+      type: 'initial',
+      data: this.data
+    });
 
     // Create the first chart
     this.createChart(this.optionsProvider.currentOptions);

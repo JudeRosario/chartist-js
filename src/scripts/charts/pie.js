@@ -42,7 +42,9 @@
     // An interpolation function for the label value
     labelInterpolationFnc: Chartist.noop,
     // Label direction can be 'neutral', 'explode' or 'implode'. The labels anchor will be positioned based on those settings as well as the fact if the labels are on the right or left side of the center of the chart. Usually explode is useful when labels are positioned far away from the center.
-    labelDirection: 'neutral'
+    labelDirection: 'neutral',
+    // If true the whole data is reversed including labels, the series order as well as the whole series data arrays.
+    reverseData: false
   };
 
   /**
@@ -51,7 +53,7 @@
    * @param center
    * @param label
    * @param direction
-   * @returns {string}
+   * @return {string}
    */
   function determineAnchorPosition(center, label, direction) {
     var toTheRight = label.x > center.x;
@@ -79,7 +81,7 @@
       labelRadius,
       totalDataSum,
       startAngle = options.startAngle,
-      dataArray = Chartist.getDataArray(this.data);
+      dataArray = Chartist.getDataArray(this.data, options.reverseData);
 
     // Create SVG.js draw
     this.svg = Chartist.createSvg(this.container, options.width, options.height, options.classNames.chart);
@@ -122,7 +124,8 @@
       // If the series is an object and contains a name we add a custom attribute
       if(this.data.series[i].name) {
         seriesGroups[i].attr({
-          'series-name': this.data.series[i].name
+          'series-name': this.data.series[i].name,
+          'meta': Chartist.serialize(this.data.series[i].meta)
         }, Chartist.xmlNs.uri);
       }
 
