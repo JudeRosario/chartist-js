@@ -17,7 +17,7 @@
     width: undefined,
     // Specify a fixed height for the chart as a string (i.e. '100px' or '50%')
     height: undefined,
-    // Padding of the chart drawing area to the container element and labels
+    // Padding of the chart drawing area to the container element and labels as a number or padding object {top: 5, right: 5, bottom: 5, left: 5}
     chartPadding: 5,
     // Override the class names that get used to generate the SVG structure of the chart
     classNames: {
@@ -86,7 +86,7 @@
     // Create SVG.js draw
     this.svg = Chartist.createSvg(this.container, options.width, options.height, options.classNames.chart);
     // Calculate charting rect
-    chartRect = Chartist.createChartRect(this.svg, options, 0, 0);
+    chartRect = Chartist.createChartRect(this.svg, options, defaultOptions.padding);
     // Get biggest circle radius possible within chartRect
     radius = Math.min(chartRect.width() / 2, chartRect.height() / 2);
     // Calculate total of all series to get reference value or use total reference from optional options
@@ -143,34 +143,32 @@
       }
 
       var start = Chartist.polarToCartesian(center.x, center.y, radius, startAngle - (i === 0 || hasSingleValInSeries ? 0 : 0.2)),
-        end = Chartist.polarToCartesian(center.x, center.y, radius, endAngle),
-        arcSweep = endAngle - startAngle <= 180 ? '0' : '1',
-        d = [
-          // Start at the end point from the cartesian coordinates
-          'M', end.x, end.y,
-          // Draw arc
-          'A', radius, radius, 0, arcSweep, 0, start.x, start.y
-        ];
+        end = Chartist.polarToCartesian(center.x, center.y, radius, endAngle);
+
+      // Create a new path element for the pie chart. If this isn't a donut chart we should close the path for a correct stroke
+      var path = new Chartist.Svg.Path(!options.donut)
+        .move(end.x, end.y)
+        .arc(radius, radius, 0, endAngle - startAngle > 180, 0, start.x, start.y);
 
       // If regular pie chart (no donut) we add a line to the center of the circle for completing the pie
-      if(options.donut === false) {
-        d.push('L', center.x, center.y);
+      if(!options.donut) {
+        path.line(center.x, center.y);
       }
 
       // Create the SVG path
       // If this is a donut chart we add the donut class, otherwise just a regular slice
-      var path = seriesGroups[i].elem('path', {
-        d: d.join(' ')
+      var pathElement = seriesGroups[i].elem('path', {
+        d: path.stringify()
       }, options.classNames.slice + (options.donut ? ' ' + options.classNames.donut : ''));
 
       // Adding the pie series value to the path
-      path.attr({
+      pathElement.attr({
         'value': dataArray[i]
       }, Chartist.xmlNs.uri);
 
       // If this is a donut, we add the stroke-width as style attribute
-      if(options.donut === true) {
-        path.attr({
+      if(options.donut) {
+        pathElement.attr({
           'style': 'stroke-width: ' + (+options.donutWidth) + 'px'
         });
       }
@@ -182,7 +180,8 @@
         totalDataSum: totalDataSum,
         index: i,
         group: seriesGroups[i],
-        element: path,
+        element: pathElement,
+        path: path.clone(),
         center: center,
         radius: radius,
         startAngle: startAngle,
@@ -289,6 +288,7 @@
     Chartist.Pie.super.constructor.call(this,
       query,
       data,
+      defaultOptions,
       Chartist.extend({}, defaultOptions, options),
       responsiveOptions);
   }

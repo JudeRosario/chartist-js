@@ -4,7 +4,7 @@
  * @module Chartist.Core
  */
 var Chartist = {
-  version: '0.7.1'
+  version: '<%= pkg.version %>'
 };
 
 (function (window, document, Chartist) {
@@ -48,7 +48,7 @@ var Chartist = {
     sources.forEach(function(source) {
       for (var prop in source) {
         if (typeof source[prop] === 'object' && !(source[prop] instanceof Array)) {
-          target[prop] = Chartist.extend(target[prop], source[prop]);
+          target[prop] = Chartist.extend({}, target[prop], source[prop]);
         } else {
           target[prop] = source[prop];
         }
@@ -160,6 +160,27 @@ var Chartist = {
 
     return result;
   };
+
+  /**
+   * This helper function can be used to round values with certain precision level after decimal. This is used to prevent rounding errors near float point precision limit.
+   *
+   * @memberof Chartist.Core
+   * @param {Number} value The value that should be rounded with precision
+   * @param {Number} [digits] The number of digits after decimal used to do the rounding
+   * @returns {number} Rounded value
+   */
+  Chartist.roundWithPrecision = function(value, digits) {
+    var precision = Math.pow(10, digits || Chartist.precision);
+    return Math.round(value * precision) / precision;
+  };
+
+  /**
+   * Precision level used internally in Chartist for rounding. If you require more decimal places you can increase this number.
+   *
+   * @memberof Chartist.Core
+   * @type {number}
+   */
+  Chartist.precision = 8;
 
   /**
    * A map with characters to escape for strings to be safely used as attribute values.
@@ -323,6 +344,30 @@ var Chartist = {
   };
 
   /**
+   * Converts a number into a padding object.
+   *
+   * @memberof Chartist.Core
+   * @param {Object|Number} padding
+   * @param {Number} [fallback] This value is used to fill missing values if a incomplete padding object was passed
+   * @returns {Object} Returns a padding object containing top, right, bottom, left properties filled with the padding number passed in as argument. If the argument is something else than a number (presumably already a correct padding object) then this argument is directly returned.
+   */
+  Chartist.normalizePadding = function(padding, fallback) {
+    fallback = fallback || 0;
+
+    return typeof padding === 'number' ? {
+      top: padding,
+      right: padding,
+      bottom: padding,
+      left: padding
+    } : {
+      top: typeof padding.top === 'number' ? padding.top : fallback,
+      right: typeof padding.right === 'number' ? padding.right : fallback,
+      bottom: typeof padding.bottom === 'number' ? padding.bottom : fallback,
+      left: typeof padding.left === 'number' ? padding.left : fallback
+    };
+  };
+
+  /**
    * Adds missing values at the end of the array. This array contains the data, that will be visualized in the chart
    *
    * @memberof Chartist.Core
@@ -382,7 +427,7 @@ var Chartist = {
    * @return {Number} The height of the area in the chart for the data series
    */
   Chartist.getAvailableHeight = function (svg, options) {
-    return Math.max((Chartist.stripUnit(options.height) || svg.height()) - (options.chartPadding * 2) - options.axisX.offset, 0);
+    return Math.max((Chartist.stripUnit(options.height) || svg.height()) - (options.chartPadding.top +  options.chartPadding.bottom) - options.axisX.offset, 0);
   };
 
   /**
@@ -498,7 +543,7 @@ var Chartist = {
 
     bounds.values = [];
     for (i = bounds.min; i <= bounds.max; i += bounds.step) {
-      bounds.values.push(i);
+      bounds.values.push(Chartist.roundWithPrecision(i));
     }
 
     return bounds;
@@ -529,19 +574,21 @@ var Chartist = {
    * @memberof Chartist.Core
    * @param {Object} svg The svg element for the chart
    * @param {Object} options The Object that contains all the optional values for the chart
+   * @param {Number} [fallbackPadding] The fallback padding if partial padding objects are used
    * @return {Object} The chart rectangles coordinates inside the svg element plus the rectangles measurements
    */
-  Chartist.createChartRect = function (svg, options) {
+  Chartist.createChartRect = function (svg, options, fallbackPadding) {
     var yOffset = options.axisY ? options.axisY.offset || 0 : 0,
       xOffset = options.axisX ? options.axisX.offset || 0 : 0,
       w = Chartist.stripUnit(options.width) || svg.width(),
-      h = Chartist.stripUnit(options.height) || svg.height();
+      h = Chartist.stripUnit(options.height) || svg.height(),
+      normalizedPadding = Chartist.normalizePadding(options.chartPadding, fallbackPadding);
 
     return {
-      x1: options.chartPadding + yOffset,
-      y1: Math.max(h - options.chartPadding - xOffset, options.chartPadding),
-      x2: Math.max(w - options.chartPadding, options.chartPadding + yOffset),
-      y2: options.chartPadding,
+      x1: normalizedPadding.left + yOffset,
+      y1: Math.max(h - normalizedPadding.bottom - xOffset, normalizedPadding.bottom),
+      x2: Math.max(w - normalizedPadding.right, normalizedPadding.right + yOffset),
+      y2: normalizedPadding.top,
       width: function () {
         return this.x2 - this.x1;
       },
@@ -682,7 +729,7 @@ var Chartist = {
       mediaQueryListeners = [],
       i;
 
-    function updateCurrentOptions() {
+    function updateCurrentOptions(preventChangedEvent) {
       var previousOptions = currentOptions;
       currentOptions = Chartist.extend({}, baseOptions);
 
@@ -695,7 +742,7 @@ var Chartist = {
         }
       }
 
-      if(eventEmitter) {
+      if(eventEmitter && !preventChangedEvent) {
         eventEmitter.emit('optionsChanged', {
           previousOptions: previousOptions,
           currentOptions: currentOptions
@@ -720,7 +767,7 @@ var Chartist = {
       }
     }
     // Execute initially so we get the correct options
-    updateCurrentOptions();
+    updateCurrentOptions(true);
 
     return {
       get currentOptions() {
@@ -728,47 +775,6 @@ var Chartist = {
       },
       removeMediaQueryListeners: removeMediaQueryListeners
     };
-  };
-
-  //http://schepers.cc/getting-to-the-point
-  Chartist.catmullRom2bezier = function (crp, z) {
-    var d = [];
-    for (var i = 0, iLen = crp.length; iLen - 2 * !z > i; i += 2) {
-      var p = [
-        {x: +crp[i - 2], y: +crp[i - 1]},
-        {x: +crp[i], y: +crp[i + 1]},
-        {x: +crp[i + 2], y: +crp[i + 3]},
-        {x: +crp[i + 4], y: +crp[i + 5]}
-      ];
-      if (z) {
-        if (!i) {
-          p[0] = {x: +crp[iLen - 2], y: +crp[iLen - 1]};
-        } else if (iLen - 4 === i) {
-          p[3] = {x: +crp[0], y: +crp[1]};
-        } else if (iLen - 2 === i) {
-          p[2] = {x: +crp[0], y: +crp[1]};
-          p[3] = {x: +crp[2], y: +crp[3]};
-        }
-      } else {
-        if (iLen - 4 === i) {
-          p[3] = p[2];
-        } else if (!i) {
-          p[0] = {x: +crp[i], y: +crp[i + 1]};
-        }
-      }
-      d.push(
-        [
-          (-p[0].x + 6 * p[1].x + p[2].x) / 6,
-          (-p[0].y + 6 * p[1].y + p[2].y) / 6,
-          (p[1].x + 6 * p[2].x - p[3].x) / 6,
-          (p[1].y + 6 * p[2].y - p[3].y) / 6,
-          p[2].x,
-          p[2].y
-        ]
-      );
-    }
-
-    return d;
   };
 
 }(window, document, Chartist));
